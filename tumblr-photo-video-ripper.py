@@ -172,9 +172,14 @@ class CrawlerScheduler(object):
             data = xmltodict.parse(response.content)
             try:
                 posts = data["tumblr"]["posts"]["post"]
-                for post in posts:
+                for post in posts:                    
                     # select the largest resolution
                     # usually in the first element
+                    if post.has_key("photoset"):
+                        photosets=post["photoset"]["photo"]
+                        for photos in photosets:
+                            self.queue.put((medium_type, photos, target_folder))
+                        continue
                     self.queue.put((medium_type, post, target_folder))
                 start += MEDIA_NUM
             except KeyError as e:
