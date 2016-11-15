@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import logging
 import os
 import sys
 import requests
@@ -26,11 +27,16 @@ MEDIA_NUM = 50
 THREADS = 10
 
 
+_PATTERN_SRC  = re.compile(r'[\S\s]*src="(\S*)" ')
+_PATTERN_TYPE = re.compile(r'[\S\s]*type="(\S*)"')
+
 class DownloadWorker(Thread):
     def __init__(self, queue, proxies=None):
         Thread.__init__(self)
         self.queue = queue
         self.proxies = proxies
+        self.logger = logging.getLogger(str(id(self)))
+        self.logger.setLevel(logging.INFO)
 
     def run(self):
         while True:
@@ -40,7 +46,9 @@ class DownloadWorker(Thread):
 
     def download(self, medium_type, post, target_folder):
         try:
+
             medium_url = self._handle_medium_url(medium_type, post)
+            print("Processing " + str(post['@url']))
             if medium_url is not None:
                 self._download(medium_type, medium_url, target_folder)
         except TypeError:
@@ -53,13 +61,17 @@ class DownloadWorker(Thread):
 
             if medium_type == "video":
                 video_player = post["video-player"][1]["#text"]
-                pattern = re.compile(r'[\S\s]*src="(\S*)" ')
-                match = pattern.match(video_player)
-                if match is not None:
-                    try:
-                        return match.group(1)
-                    except IndexError:
-                        return None
+                match_type = _PATTERN_TYPE.match(video_player)
+                if match_type is None:
+                    return None
+                if match_type.group(1) != "video/mp4":
+                    return None
+
+                match_src = _PATTERN_SRC.match(video_player)
+                if match_src is None:
+                    return None
+
+                return match_src.group(1)
         except:
             raise TypeError("Unable to find the right url for downloading. "
                             "Please open a new issue on "
@@ -77,6 +89,7 @@ class DownloadWorker(Thread):
             medium_name += ".mp4"
 
         file_path = os.path.join(target_folder, medium_name)
+
         if not os.path.isfile(file_path):
             print("Downloading %s from %s.\n" % (medium_name,
                                                  medium_url))
@@ -88,10 +101,11 @@ class DownloadWorker(Thread):
                                         proxies=self.proxies,
                                         timeout=TIMEOUT)
                     with open(file_path, 'wb') as fh:
-                        for chunk in resp.iter_content(chunk_size=1024):
+                        for chunk in resp.iter_content(chunk_size=1024 * 64):
                             fh.write(chunk)
                     break
-                except:
+                except Exception as e:
+                    print("Error: " + str(e) + " ... retrying")
                     # try again
                     pass
                 retry_times += 1
@@ -163,7 +177,8 @@ class CrawlerScheduler(object):
                     # usually in the first element
                     self.queue.put((medium_type, post, target_folder))
                 start += MEDIA_NUM
-            except KeyError:
+            except KeyError as e:
+                print("Key error: " + str(e))
                 break
 
 
