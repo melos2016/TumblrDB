@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import logging
+import logging.config
 import os
 import sys
 import requests
@@ -9,6 +10,7 @@ from six.moves import queue as Queue
 from threading import Thread
 import re
 import json
+import apsw
 
 
 # Setting timeout
@@ -26,17 +28,28 @@ MEDIA_NUM = 50
 # Numbers of downloading threads concurrently
 THREADS = 10
 
+conn=apsw.Connection("1.db")
+cu=conn.cursor()
+logging.config.fileConfig("logger.conf")
+logger = logging.getLogger("")
 
-_PATTERN_SRC  = re.compile(r'[\S\s]*src="(\S*)" ')
-_PATTERN_TYPE = re.compile(r'[\S\s]*type="(\S*)"')
+def handlesql(sites):
+    sites=sites
+    logger.info(sites)
+    for site in sites:
+        logger.info(site)
+        sql='''create table if not exists "%s" ("post" INTEGER,"type" TEXT,"targeturl" TEXT NOT NULL,"filename"  TEXT  primary key NOT NULL unique,"date-gmt"  TEXT,"date"  TEXT,"unix-timestamp"  INTEGER,"url"  TEXT,"slug"  TEXT)''' % site
+        cu.execute(sql)
+        sql="select name from blogs where name='%s'" % site                
+        if len(cu.execute(sql).fetchall()) == 0:
+            cu.execute("insert into blogs(name) values('%s')" % site)
+        
 
 class DownloadWorker(Thread):
     def __init__(self, queue, proxies=None):
         Thread.__init__(self)
         self.queue = queue
         self.proxies = proxies
-        self.logger = logging.getLogger(str(id(self)))
-        self.logger.setLevel(logging.INFO)
 
     def run(self):
         while True:
@@ -61,17 +74,13 @@ class DownloadWorker(Thread):
 
             if medium_type == "video":
                 video_player = post["video-player"][1]["#text"]
-                match_type = _PATTERN_TYPE.match(video_player)
-                if match_type is None:
-                    return None
-                if match_type.group(1) != "video/mp4":
-                    return None
-
-                match_src = _PATTERN_SRC.match(video_player)
-                if match_src is None:
-                    return None
-
-                return match_src.group(1)
+                pattern = re.compile(r'[\S\s]*src="(\S*)" ')
+                match = pattern.match(video_player)
+                if match is not None:
+                    try:
+                        return match.group(1)
+                    except IndexError:
+                        return None
         except:
             raise TypeError("Unable to find the right url for downloading. "
                             "Please open a new issue on "
@@ -170,16 +179,69 @@ class CrawlerScheduler(object):
             response = requests.get(media_url,
                                     proxies=self.proxies)
             data = xmltodict.parse(response.content)
+            if medium_type =="photo":
+                sql="update blogs set type1='%s',total1='%s' where name='%s'" % (medium_type,data["tumblr"]["posts"]["@total"],str(site))
+                cu.execute(sql)
+            else:
+                sql="update blogs set type2='%s',total2='%s' where name='%s'" % (medium_type,data["tumblr"]["posts"]["@total"],str(site))
+                cu.execute(sql)
             try:
                 posts = data["tumblr"]["posts"]["post"]
-                for post in posts:                    
+                for post in posts:
+                    index=1
                     # select the largest resolution
                     # usually in the first element
                     if post.has_key("photoset"):
                         photosets=post["photoset"]["photo"]
-                        for photos in photosets:
+                        zt=[]
+                        for photos in photosets: 
+                            durl = photos["photo-url"][0]["#text"].replace('http:', 'https:')
+                            t=[post['@id'],post['@type'],'','',post['@date-gmt'],post['@date'],post['@unix-timestamp'],post['@url'],post['@slug']]                           
+                            filename = os.path.join(
+                                '%s_%s.%s' % (post['@id'], index, durl.split('.')[-1]))
+                            t[2]=durl
+                            t[3]=filename
+                            sql="select filename from '%s' where filename='%s'" % (site,str(t[3]))
+                            logger.info(sql) 
+                            logger.info(len(cu.execute(sql).fetchall())) 
+                            if len(cu.execute(sql).fetchall()) == 0:
+                                zt.append(t)
+                                logger.info(zt)
+                            index += 1
                             self.queue.put((medium_type, photos, target_folder))
+                        if len(zt) > 0:
+                            sql='insert into "%s" values(?,?,?,?,?,?,?,?,?)' % site
+                            cu.executemany(sql,(zt))
                         continue
+                    zt=[]
+                    t=[post['@id'],post['@type'],'','',post['@date-gmt'],post['@date'],post['@unix-timestamp'],post['@url'],post['@slug']]
+                    if medium_type =="photo":
+                        durl = post["photo-url"][0]["#text"].replace('http:', 'https:')
+                        filename = os.path.join(
+                                '%s_%s.%s' % (post['@id'], index, durl.split('.')[-1]))
+                    else:                        
+                        if post["video-player"][1].has_key("#text"):
+                            video_player = post["video-player"][1]["#text"]
+                        else:
+                            continue
+                        pattern = re.compile(r'[\S\s]*src="(\S*)" ')
+                        match = pattern.match(video_player)
+                        if match is not None:
+                            durl=match.group(1)
+                        else:
+                            continue
+                        filename = os.path.join('%s.%s' % (post['@id'], ".mp4"))
+                    t[2]=durl
+                    t[3]=filename
+                    sql="select filename from '%s' where filename='%s'" % (site,str(t[3]))
+                    logger.info(sql) 
+                    logger.info(len(cu.execute(sql).fetchall())) 
+                    if len(cu.execute(sql).fetchall()) == 0:
+                        zt.append(t)
+                        logger.info(zt)
+                    if len(zt) > 0:
+                        sql='replace into "%s" values(?,?,?,?,?,?,?,?,?)' % site
+                        cu.executemany(sql,(zt))
                     self.queue.put((medium_type, post, target_folder))
                 start += MEDIA_NUM
             except KeyError as e:
@@ -241,5 +303,7 @@ if __name__ == "__main__":
     if len(sites) == 0 or sites[0] == "":
         usage()
         sys.exit(1)
+
+    handlesql(sites)
 
     CrawlerScheduler(sites, proxies=proxies)
