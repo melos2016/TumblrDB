@@ -89,7 +89,10 @@ class CrawlerScheduler(object):
                     sql="update blogs set type2='%s',total2='%s' where name='%s'" % (medium_type,data["tumblr"]["posts"]["@total"],str(site))
                 cu.execute(sql)
                 medium_type="video"
-                arr.append(data["tumblr"]["posts"]["post"]['@unix-timestamp'])
+                if int(data["tumblr"]["posts"]["@total"])>0:
+                    arr.append(data["tumblr"]["posts"]["post"]['@unix-timestamp'])
+                else:
+                    arr.append(0)
             timestamp=arr[0] if arr[0]>=arr[1] else arr[1]
             timestamp=float(timestamp)
             userlastpost=time.strftime("%Y-%m-%d %H:%M:%S GMT", time.gmtime(timestamp))
@@ -130,6 +133,8 @@ class CrawlerScheduler(object):
             data = xmltodict.parse(response.content)
             try:
                 posts = data["tumblr"]["posts"]["post"]
+                if isinstance(posts,dict):
+                    posts=[posts]
             except KeyError as e:
                 #print("Key error: " + str(e))
                 logger.info("%s ALL RECORD" % site)
@@ -146,7 +151,7 @@ class CrawlerScheduler(object):
                 logger.info("User post timestamp :%s" % posts[0]['@unix-timestamp'])
                 logger.info("DB lastupate timestamp :%s" % lastinfo[13])
                 logger.info("Reset start = %s ......................" % start)
-            self.crwl_url(site,data)
+            self.crwl_url(site,posts)
             #offset[site]=start
             #with open("./json.json",'w') as f:
                 #f.write(json.dumps(offset, indent=4, sort_keys=True))
@@ -154,10 +159,9 @@ class CrawlerScheduler(object):
             start += MEDIA_NUM
 
 
-    def crwl_url(self,site,data):
+    def crwl_url(self,site,posts):
         try:
             try:
-                posts = data["tumblr"]["posts"]["post"]
                 recordtime=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
                 for post in posts:
                     medium_type=post['@type']
@@ -195,7 +199,7 @@ class CrawlerScheduler(object):
                                 '%s_%s.%s' % (post['@id'], index, durl.split('.')[-1]))
                     else:                      
                         #if post["video-player"][1].has_key("#text"):
-                        if medium_type =="video" and isinstance(post["video-source"],dict):
+                        if medium_type =="video":
                             video_player = post["video-player"][1]["#text"]
                         else:
                             continue
