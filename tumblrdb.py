@@ -1,3 +1,5 @@
+#coding:gbk
+
 import logging
 import logging.config
 import os
@@ -78,7 +80,7 @@ class CrawlerScheduler(object):
                                     timeout=TIMEOUT)
                         break
                     except Exception as e:
-                        logger.info("Error: " + str(e) + " ... retrying")
+                        logger.warning("Error: " + str(e) + " ... retrying")
                         # try again
                         pass
                     retry_times += 1
@@ -114,9 +116,10 @@ class CrawlerScheduler(object):
     	base_url = "https://{0}.tumblr.com/api/read?num={1}&start={2}"
         i=0
         start=START
-        logger.info("Beginning: Record %s posts..........." % site)
+        logger.info("开始收集用户 %s 数据..........." % site)
         while True:
             media_url = base_url.format(site, MEDIA_NUM, start)
+            logger.info("解析链接: %s" % media_url)
             retry_times = 0
             while retry_times < RETRY:
                 try:
@@ -126,7 +129,7 @@ class CrawlerScheduler(object):
                                     timeout=TIMEOUT)
                     break
                 except Exception as e:
-                    logger.info("Error: " + str(e) + " ... retrying")
+                    logger.warning("Error: " + str(e) + " ... retrying")
                     # try again
                     pass
                 retry_times += 1
@@ -137,31 +140,35 @@ class CrawlerScheduler(object):
                     posts=[posts]
             except KeyError as e:
                 #print("Key error: " + str(e))
-                logger.info("%s ALL RECORD" % site)
+                logger.info("此链接无数据！")
+                logger.info("更新用户 %s 数据完成！" % site)
                 break
-            if int(posts[0]['@unix-timestamp'])>lastinfo[13]:
-                logger.info("User post timestamp :%s" % posts[0]['@unix-timestamp'])
-                logger.info("DB lastupate timestamp :%s" % lastinfo[13])
-                logger.info("User post timestamp is bigger than last DB lastupate timestamp!!")
+            if int(posts[0]['@unix-timestamp'])>int(lastinfo[13]):
+                logger.info("用户提交时间 :%s" % str(posts[0]['@unix-timestamp']))
+                logger.info("上次更新时间 :%s" % lastinfo[13])
+                logger.info("用户提交时间晚于更新时间!!")
                 pass
             elif i==0:
                 start=int(lastinfo[8]/MEDIA_NUM)*MEDIA_NUM-MEDIA_NUM*3
                 if start<0:start=0
                 i+=1
-                logger.info("User post timestamp :%s" % posts[0]['@unix-timestamp'])
-                logger.info("DB lastupate timestamp :%s" % lastinfo[13])
-                logger.info("Reset start = %s ......................" % start)
+                logger.info("用户提交时间 :%s" % str(posts[0]['@unix-timestamp']))
+                logger.info("上次更新时间 :%s" % lastinfo[13])
+                logger.info("需要重新设置链接偏移数据！")
+                logger.info("重新设置偏移为 %s !" % start)
             self.crwl_url(site,posts)
             #offset[site]=start
             #with open("./json.json",'w') as f:
                 #f.write(json.dumps(offset, indent=4, sort_keys=True))
                 #f.close()
+            logger.info("链接数据解析完成！")
             start += MEDIA_NUM
 
 
     def crwl_url(self,site,posts):
         try:
             try:
+                #posts = data["tumblr"]["posts"]["post"]
                 recordtime=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
                 for post in posts:
                     medium_type=post['@type']
@@ -170,33 +177,38 @@ class CrawlerScheduler(object):
                     # usually in the first element
                     if post.has_key("photoset"):
                         photosets=post["photoset"]["photo"]
+                        logger03.info("解析用户[%s]-[%s]数据中......" % (site,str(post['@id'])))
                         zt=[]
-                        for photos in photosets: 
+                        for photos in photosets:                             
                             durl = photos["photo-url"][0]["#text"].replace('http:', 'https:')
                             t=[post['@id'],post['@type'],'','',recordtime,post['@date-gmt'],post['@unix-timestamp'],post['@url'],post['@slug']]                           
                             filename = os.path.join(
                                 '%s_%s.%s' % (post['@id'], index, durl.split('.')[-1]))
                             t[2]=durl
                             t[3]=filename
+                            logger03.info("照片%s链接：%s" % (index,durl.encode('gbk')))
                             sql="select filename from '%s' where filename='%s'" % (site,str(t[3]))
                             if len(cu.execute(sql).fetchall()) == 0:
                                 zt.append(t)
                             index += 1
+                        logger03.info("判断POST：%s是否已记录！" % str(post['@id']))
                         if len(zt) > 0:
                             sql='insert into "%s" values(?,?,?,?,?,?,?,?,?)' % site
                             cu.executemany(sql,(zt))
-                            logger03.info("%s-%s is recorded!" % (site,post["@id"]))
+                            logger.info("用户[%s]-[%s]数据记录完成......" % (site,str(post['@id'])))
                             sql='update blogs set record1=record1+1,lastrecordpostid=%s where name="%s"' % (post['@id'],str(site))
                             cu.execute(sql)
                         else:
-                            logger03.info("%s-%s has recorded!" % (site,post["@id"]))
+                            logger03.info("用户[%s]-[%s]已在数据库中！" % (site,str(post['@id'])))
                         continue
+                    logger03.info("解析用户[%s]-[%s]数据中......" % (site,str(post['@id'])))
                     zt=[]
                     t=[post['@id'],post['@type'],'','',recordtime,post['@date-gmt'],post['@unix-timestamp'],post['@url'],post['@slug']]
                     if medium_type =="photo":
                         durl = post["photo-url"][0]["#text"].replace('http:', 'https:')
                         filename = os.path.join(
                                 '%s_%s.%s' % (post['@id'], index, durl.split('.')[-1]))
+                        logger03.info("照片链接：%s" % durl.encode('gbk'))
                     else:                      
                         #if post["video-player"][1].has_key("#text"):
                         if medium_type =="video":
@@ -204,14 +216,15 @@ class CrawlerScheduler(object):
                         else:
                             continue
                         pattern = re.compile(r'[\S\s]*src="(\S*tumblr_[^/]*)\S*" ')
-                        match = pattern.match(video_player)
+                        match = pattern.match(video_player)                
                         if match is not None and isinstance(post["video-source"],dict):
                             durl=match.group(1)
+                            logger03.info("初始视频链接：%s" % str(durl))
                             durl="%s//%s/%s.%s" % (durl.split("/")[0],"vtt.tumblr.com",durl.split("/")[-1],post["video-source"]["extension"])
-                            logger03.info("video url has match:%s" % durl)
+                            logger03.info("重定向视频链接：%s" % str(durl))
                         else:
                             self.novideo(site,post["@id"])
-                            logger.info("%s don't have video" % post["@id"])
+                            logger.info("用户[%s]-[%s]没有视频链接" % (site,str(post["@id"])))
                             continue                  
                         filename = os.path.join('%s.%s' % (post['@id'], post["video-source"]["extension"]))
                     t[2]=durl
@@ -219,37 +232,39 @@ class CrawlerScheduler(object):
                     sql="select filename from '%s' where filename='%s'" % (site,str(t[3]))
                     if len(cu.execute(sql).fetchall()) == 0:
                         zt.append(t)
+                    logger03.info("判断POST：%s是否已记录！" % str(post['@id']))
                     if len(zt) > 0:
                         sql='replace into "%s" values(?,?,?,?,?,?,?,?,?)' % site
                         cu.executemany(sql,(zt))
-                        logger03.info("%s-%s is recorded!" % (site,post["@id"]))
                         if medium_type =="photo":
                             sql='update blogs set record1=record1+1,lastrecordpostid=%s where name="%s"' % (post['@id'],str(site))
                             cu.execute(sql)
                         if medium_type =="video":
                             sql='update blogs set record2=record2+1,lastrecordpostid=%s where name="%s"' % (post['@id'],str(site))
                             cu.execute(sql)
+                        logger.info("用户[%s]-[%s]数据记录完成......" % (site,str(post['@id'])))
                     else:
-                        logger03.info("%s-%s has recorded!" % (site,post["@id"]))
+                        logger03.info("用户[%s]-[%s]已在数据库中！" % (site,str(post['@id'])))
             except KeyError as e:
-                print("Key error: " + str(e))
-                logger.info("have mistake")
+                logger.warning("Key error: " + str(e))
+                logger.info("出现错误！")
                 if str(e)=="'#text'":
-                    logger.info("%s don't have video" % post["@id"])
-                    self.novideo(site,post["@id"]);
+                    logger.info("用户[%s]-[%s]没有视频链接" % (site,str(post['@id'])))
+                    self.novideo(site,str(post['@id']));
         except KeyError as e:
-            print("Key error: " + str(e))
+            logger.warning("Key error: " + str(e))
 
 
     def novideo(self,site,postid):
         sql="select postid from novideo where postid='%s'" % postid
-        logger.info("check novideo records!")
+        logger.info("查询数据库中........")
         if len(cu.execute(sql).fetchall()) == 0:
             sql='update blogs set novideo=novideo+1 where name="%s"' % str(site)
             cu.execute(sql)
             sql="insert into novideo values('%s',%s)" % (site,postid)
             cu.execute(sql)
-            logger.info("Record novideo post success!")
+            logger.info("增加没有视频的VIDEO-POST：%s数据成功！"% str(postid))
+        logger.info("已有此数据！")
 
 if __name__ == "__main__":
     sites = None
